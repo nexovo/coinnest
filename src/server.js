@@ -8,6 +8,7 @@ import cors from 'cors';
 import { rateLimit } from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { initializeSchema } from './init-schema.js';
 const env=process.env;
 if(!env.JWT_SECRET || env.JWT_SECRET.length<32 || env.JWT_SECRET.startsWith('replace-')) throw Error('Set a random JWT_SECRET (32+ characters)');
 const demo=env.ENABLE_DEMO_REWARDS==='true' && env.NODE_ENV!=='production';
@@ -71,5 +72,13 @@ app.post('/demo/claim',auth,async(req,res)=>{
  }catch(e){await c.rollback();throw e;}finally{c.release();}
 });
 // No client-trusted production reward endpoint. Implement verified AdMob SSV before enabling live rewards.
-app.use((err,req,res,next)=>{if(!err.status)console.error(err.code||err.name);res.status(err.status||500).json({error:err.status?err.message:'Server unavailable; try again later'});});
-app.listen(Number(env.PORT||5000),'0.0.0.0',()=>console.log('CoinNest API ready'));
+app.use((err,req,res,next)=>{if(!err.status)console.error('REQUEST_FAILED', req.method, req.path, 'code='+String(err.code||err.name), 'errno='+String(err.errno||''), 'sqlState='+String(err.sqlState||''));res.status(err.status||500).json({error:err.status?err.message:'Server unavailable; try again later'});});
+try {
+  await initializeSchema(db);
+  console.log('Database schema ready');
+  app.listen(Number(env.PORT||5000),'0.0.0.0',()=>console.log('CoinNest API ready v0.1.2'));
+} catch (error) {
+  console.error('DATABASE_SETUP_FAILED', 'code='+String(error.code||error.name), 'errno='+String(error.errno||''), 'sqlState='+String(error.sqlState||''));
+  await db.end();
+  process.exitCode=1;
+}
