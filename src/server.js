@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import { rateLimit } from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 const env=process.env;
 if(!env.JWT_SECRET || env.JWT_SECRET.length<32 || env.JWT_SECRET.startsWith('replace-')) throw Error('Set a random JWT_SECRET (32+ characters)');
 const demo=env.ENABLE_DEMO_REWARDS==='true' && env.NODE_ENV!=='production';
@@ -16,6 +17,8 @@ const origins=(env.CORS_ORIGINS||'').split(',').map(x=>x.trim());
 app.use(cors({origin(origin,cb){cb(null,!origin||origins.includes(origin));}}));
 app.use(express.json({limit:'16kb'}));
 app.use(rateLimit({windowMs:60000,limit:100}));
+// Serve the web client and API from the same origin.
+app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url))));
 const authLimit=rateLimit({windowMs:15*60000,limit:20});
 function fail(status,message){const e=Error(message);e.status=status;throw e;}
 function auth(req,res,next){try{const token=req.headers.authorization?.replace(/^Bearer /,'');req.uid=jwt.verify(token,env.JWT_SECRET,{algorithms:['HS256'],issuer:'coinnest'}).sub;next();}catch{res.status(401).json({error:'Please sign in again'});}}
