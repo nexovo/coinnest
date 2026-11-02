@@ -1,0 +1,7 @@
+Upload the CONTENTS of this folder to your backend GitHub repository.
+Render Root Directory: leave EMPTY
+Build Command: npm install
+Start Command: npm start
+Health Check: /health
+Run schema.sql once in Aiven MySQL. Copy values from .env.example into Render Environment; never upload .env. Set NODE_ENV=production and ENABLE_DEMO_REWARDS=false for public hosting.
+This API starter does not include live SSV or production ad rewards.
