@@ -7,7 +7,7 @@ export const adRewardSchema=`CREATE TABLE IF NOT EXISTS ad_reward_sessions (
  INDEX ads_user_created(user_id,created_at),
  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 )`;
-const units={rewarded:'ca-app-pub-5282003945839371/7951182099',rewarded_interstitial:'ca-app-pub-5282003945839371/7665734922'};
+const units={rewarded:'ca-app-pub-6694473692053588/5354607219',rewarded_interstitial:'ca-app-pub-6694473692053588/4803942877'};
 export function installAdmob(app,db,auth,{enabled=false}={}){
  const verify=createSsvVerifier();
  app.post('/ads/session',auth,async(req,res)=>{

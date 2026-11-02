@@ -15,7 +15,13 @@ const env=process.env;
 if(!env.JWT_SECRET || env.JWT_SECRET.length<32 || env.JWT_SECRET.startsWith('replace-')) throw Error('Set a random JWT_SECRET (32+ characters)');
 const demo=env.ENABLE_DEMO_REWARDS==='true' && env.NODE_ENV!=='production';
 const db=mysql.createPool({host:env.DB_HOST,port:Number(env.DB_PORT||3306),user:env.DB_USER,password:env.DB_PASSWORD,database:env.DB_NAME||'defaultdb',ssl:{rejectUnauthorized:true,...(env.DB_CA?{ca:env.DB_CA.split(String.fromCharCode(92)+'n').join(String.fromCharCode(10))}:{})},connectionLimit:5,supportBigNumbers:true,bigNumberStrings:true,timezone:'Z'});
-const app=express(); app.set('trust proxy',1); app.use(helmet());
+const app=express(); app.set('trust proxy',1); app.use(helmet({contentSecurityPolicy:{directives:{
+ 'script-src':["'self'",'https://pagead2.googlesyndication.com','https://*.googlesyndication.com','https://*.doubleclick.net','https://*.google.com','https://*.googleadservices.com'],
+ 'frame-src':["'self'",'https://*.googlesyndication.com','https://*.doubleclick.net','https://*.google.com'],
+ 'connect-src':["'self'",'https://*.googlesyndication.com','https://*.doubleclick.net','https://*.google.com','https://*.googleadservices.com'],
+ 'img-src':["'self'",'data:','https:'],
+ 'style-src':["'self'","'unsafe-inline'"]
+}}}));
 const origins=(env.CORS_ORIGINS||'').split(',').map(x=>x.trim());
 app.use(cors({origin(origin,cb){cb(null,!origin||origins.includes(origin));}}));
 const sessions=createSessions(db,{secure:env.NODE_ENV!=='development'});
@@ -29,6 +35,12 @@ app.use((req,res,next)=>{
 });
 app.use(express.json({limit:'16kb'}));
 app.use(rateLimit({windowMs:60000,limit:100}));
+// Ads run only on the public guide, never on login, wallet, history or redemption.
+app.get('/ads/web-config',(req,res)=>res.json({
+ enabled:env.ENABLE_WEB_ADS==='true',
+ client:'ca-pub-6694473692053588',
+ slots:[env.ADSENSE_GUIDE_MIDDLE_SLOT,env.ADSENSE_GUIDE_BOTTOM_SLOT].map(x=>/^\d{10}$/.test(x||'')?x:null)
+}));
 // Serve the web client and API from the same origin.
 app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url))));
 installAdmob(app,db,auth,{enabled:env.ENABLE_AD_REWARDS==='true'});
