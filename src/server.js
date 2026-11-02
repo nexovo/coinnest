@@ -9,6 +9,7 @@ import { rateLimit } from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { initializeSchema } from './init-schema.js';
+import { createSessions } from './sessions.js';
 const env=process.env;
 if(!env.JWT_SECRET || env.JWT_SECRET.length<32 || env.JWT_SECRET.startsWith('replace-')) throw Error('Set a random JWT_SECRET (32+ characters)');
 const demo=env.ENABLE_DEMO_REWARDS==='true' && env.NODE_ENV!=='production';
@@ -16,13 +17,29 @@ const db=mysql.createPool({host:env.DB_HOST,port:Number(env.DB_PORT||3306),user:
 const app=express(); app.set('trust proxy',1); app.use(helmet());
 const origins=(env.CORS_ORIGINS||'').split(',').map(x=>x.trim());
 app.use(cors({origin(origin,cb){cb(null,!origin||origins.includes(origin));}}));
+const sessions=createSessions(db,{secure:env.NODE_ENV!=='development'});
+// Cookie-authenticated writes must come from a configured or same-site origin.
+app.use((req,res,next)=>{
+ const origin=req.get('origin');
+ const sameOrigin=`${req.protocol}://${req.get('host')}`;
+ if(!['GET','HEAD','OPTIONS'].includes(req.method)&&origin&&origin!==sameOrigin&&!origins.includes(origin))return res.status(403).json({error:'Request origin is not allowed'});
+ if(req.path.startsWith('/auth/')||['/me','/history','/rewards'].includes(req.path))res.set('Cache-Control','no-store');
+ next();
+});
 app.use(express.json({limit:'16kb'}));
 app.use(rateLimit({windowMs:60000,limit:100}));
 // Serve the web client and API from the same origin.
 app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url))));
 const authLimit=rateLimit({windowMs:15*60000,limit:20});
 function fail(status,message){const e=Error(message);e.status=status;throw e;}
-function auth(req,res,next){try{const token=req.headers.authorization?.replace(/^Bearer /,'');req.uid=jwt.verify(token,env.JWT_SECRET,{algorithms:['HS256'],issuer:'coinnest'}).sub;next();}catch{res.status(401).json({error:'Please sign in again'});}}
+async function auth(req,res,next){
+ const header=req.headers.authorization;
+ if(header){
+  try{req.uid=jwt.verify(header.replace(/^Bearer /,''),env.JWT_SECRET,{algorithms:['HS256'],issuer:'coinnest'}).sub;return next();}
+  catch{return res.status(401).json({error:'Please sign in again'});}
+ }
+ try{req.uid=await sessions.resolve(req);if(!req.uid)return res.status(401).json({error:'Please sign in again'});next();}catch(e){next(e);}
+}
 const tokenFor=id=>jwt.sign({},env.JWT_SECRET,{subject:id,expiresIn:'12h',issuer:'coinnest',algorithm:'HS256'});
 app.get('/health',async(req,res)=>{await db.query('SELECT 1');res.json({status:'ok',demo});});
 app.post('/auth/signup',authLimit,async(req,res)=>{
@@ -30,6 +47,7 @@ app.post('/auth/signup',authLimit,async(req,res)=>{
  if(typeof name!=='string'||name.trim().length<2||name.length>80||typeof email!=='string'||email.length>190||!/^\S+@\S+\.\S+$/.test(email)||typeof password!=='string'||password.length<10||Buffer.byteLength(password)>72) fail(400,'Use a valid name/email and password of 10–72 bytes');
  const id=randomUUID(),hash=await bcrypt.hash(password,12);
  try{await db.execute('INSERT INTO users(id,name,email,password_hash) VALUES(?,?,?,?)',[id,name.trim(),email.toLowerCase().trim(),hash]);}catch(e){if(e.code==='ER_DUP_ENTRY')fail(409,'Email already registered');throw e;}
+ await sessions.issue(req,res,id);
  res.status(201).json({token:tokenFor(id)});
 });
 app.post('/auth/login',authLimit,async(req,res)=>{
@@ -39,8 +57,10 @@ app.post('/auth/login',authLimit,async(req,res)=>{
  const hash=rows[0]?.password_hash||'$2b$12$.....................................................';
  const ok=await bcrypt.compare(password,hash);
  if(!rows[0]||!ok)fail(401,'Incorrect email or password');
+ await sessions.issue(req,res,rows[0].id);
  res.json({token:tokenFor(rows[0].id)});
 });
+app.post('/auth/logout',async(req,res)=>{await sessions.revoke(req,res);res.json({ok:true});});
 app.get('/me',auth,async(req,res)=>{const [u]=await db.execute('SELECT id,name,email,coins FROM users WHERE id=?',[req.uid]);if(!u[0])fail(401,'Account unavailable');res.json({...u[0],demo});});
 app.get('/rewards',auth,async(req,res)=>{const [rows]=await db.query('SELECT * FROM rewards');res.json(rows);});
 app.get('/history',auth,async(req,res)=>{const [ledger]=await db.execute('SELECT amount,kind,created_at FROM ledger WHERE user_id=? ORDER BY created_at DESC LIMIT 100',[req.uid]);const [redemptions]=await db.execute('SELECT r.*,w.title FROM redemptions r JOIN rewards w ON r.reward_id=w.id WHERE user_id=? ORDER BY created_at DESC LIMIT 100',[req.uid]);res.json({ledger,redemptions});});
@@ -75,8 +95,9 @@ app.post('/demo/claim',auth,async(req,res)=>{
 app.use((err,req,res,next)=>{if(!err.status)console.error('REQUEST_FAILED', req.method, req.path, 'code='+String(err.code||err.name), 'errno='+String(err.errno||''), 'sqlState='+String(err.sqlState||''));res.status(err.status||500).json({error:err.status?err.message:'Server unavailable; try again later'});});
 try {
   await initializeSchema(db);
+  await db.execute('DELETE FROM web_sessions WHERE expires_at<=UTC_TIMESTAMP()');
   console.log('Database schema ready');
-  app.listen(Number(env.PORT||5000),'0.0.0.0',()=>console.log('CoinNest API ready v0.1.2'));
+  app.listen(Number(env.PORT||5000),'0.0.0.0',()=>console.log('CoinNest API ready v0.1.4'));
 } catch (error) {
   console.error('DATABASE_SETUP_FAILED', 'code='+String(error.code||error.name), 'errno='+String(error.errno||''), 'sqlState='+String(error.sqlState||''));
   await db.end();

@@ -11,6 +11,7 @@ export async function initializeSchema(db) {
     'SELECT id,user_id,amount,kind,reference,created_at FROM ledger LIMIT 0',
     'SELECT id,title,cost,external,active FROM rewards LIMIT 0',
     'SELECT id,user_id,reward_id,game_id,cost,status,created_at FROM redemptions LIMIT 0',
-    'SELECT id,user_id,consumed,created_at FROM demo_sessions LIMIT 0'
+    'SELECT id,user_id,consumed,created_at FROM demo_sessions LIMIT 0',
+    'SELECT token_hash,user_id,expires_at FROM web_sessions LIMIT 0'
   ]) await db.query(query);
 }
